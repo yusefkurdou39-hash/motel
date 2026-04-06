@@ -1425,7 +1425,22 @@
             document.getElementById('appContainer').classList.remove('active');
         }
 
-        function showApp() {
+        async function showApp() {
+            const token = getAuthToken();
+            if (!token) {
+                showToast('Session expired. Please sign in again.', 'error');
+                showLogin();
+                return;
+            }
+
+            try {
+                // Always refresh from server so all devices stay in sync.
+                await bootstrapFromServer();
+            } catch (err) {
+                console.error('bootstrapFromServer failed:', err);
+                showToast('Could not refresh latest online data', 'error');
+            }
+
             document.getElementById('loginContainer').style.display = 'none';
             document.getElementById('appContainer').classList.add('active');
             
@@ -3581,7 +3596,7 @@
                         extrasTotal: extrasTotal
                     };
                     saveToStorage(CONFIG.STORAGE_KEYS.GUESTS, guests);
-                    try { await pushStateToServer(CONFIG.STORAGE_KEYS.GUESTS); } catch (e) { /* ignore */ }
+                    try { await pushStateToServer(CONFIG.STORAGE_KEYS.GUESTS); } catch (e) { showToast('Saved locally, but online sync failed', 'error'); }
                     refreshCheckoutNotificationBadge();
                     hideGuestForm();
                     showToast(T('saved'), 'success');
@@ -3608,7 +3623,7 @@
 
                 guests.push(newGuest);
                 saveToStorage(CONFIG.STORAGE_KEYS.GUESTS, guests);
-                try { await pushStateToServer(CONFIG.STORAGE_KEYS.GUESTS); } catch (e) { /* ignore */ }
+                try { await pushStateToServer(CONFIG.STORAGE_KEYS.GUESTS); } catch (e) { showToast('Saved locally, but online sync failed', 'error'); }
                 refreshCheckoutNotificationBadge();
 
                 hideGuestForm();
@@ -3635,7 +3650,7 @@
             
             expenses.push(newExpense);
             saveToStorage(CONFIG.STORAGE_KEYS.EXPENSES, expenses);
-            pushStateToServer(CONFIG.STORAGE_KEYS.EXPENSES).catch(() => {});
+            pushStateToServer(CONFIG.STORAGE_KEYS.EXPENSES).catch(() => showToast('Saved locally, but online sync failed', 'error'));
             
             hideExpenseForm();
             showToast(T('saved'), 'success');
@@ -3649,7 +3664,7 @@
                 const guests = getFromStorage(CONFIG.STORAGE_KEYS.GUESTS, []);
                 const updatedGuests = guests.filter(guest => guest.id !== id);
                 saveToStorage(CONFIG.STORAGE_KEYS.GUESTS, updatedGuests);
-                pushStateToServer(CONFIG.STORAGE_KEYS.GUESTS).catch(() => {});
+                pushStateToServer(CONFIG.STORAGE_KEYS.GUESTS).catch(() => showToast('Deleted locally, but online sync failed', 'error'));
                 refreshCheckoutNotificationBadge();
                 
                 showToast(T('deleted'), 'success');
@@ -3664,7 +3679,7 @@
                 const expenses = getFromStorage(CONFIG.STORAGE_KEYS.EXPENSES, []);
                 const updatedExpenses = expenses.filter(expense => expense.id !== id);
                 saveToStorage(CONFIG.STORAGE_KEYS.EXPENSES, updatedExpenses);
-                pushStateToServer(CONFIG.STORAGE_KEYS.EXPENSES).catch(() => {});
+                pushStateToServer(CONFIG.STORAGE_KEYS.EXPENSES).catch(() => showToast('Deleted locally, but online sync failed', 'error'));
                 
                 showToast(T('deleted'), 'success');
                 loadPage('expenses');
@@ -3731,7 +3746,7 @@
         }
 
         // Event listeners
-        document.addEventListener('DOMContentLoaded', function() {
+        document.addEventListener('DOMContentLoaded', async function() {
             console.log("DOM loaded, initializing app...");
             window.addEventListener('error', function(e) {
                 console.error('Unhandled runtime error:', e.error || e.message);
@@ -3746,7 +3761,7 @@
             // Check if user is logged in
             const currentUser = getCurrentUser();
             if (currentUser) {
-                showApp();
+                await showApp();
             } else {
                 showLogin();
             }
