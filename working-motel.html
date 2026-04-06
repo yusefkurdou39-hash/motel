@@ -1445,6 +1445,10 @@
             return getFromStorage('motel_api_token', null);
         }
 
+        function isOfflineFileMode() {
+            return window.location.protocol === 'file:';
+        }
+
         async function apiRequest(path, options = {}) {
             const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
             const token = getAuthToken();
@@ -1461,8 +1465,8 @@
         }
 
         function isOnlineBackendMode() {
-            // If hosted with Node backend, this endpoint exists.
-            return true;
+            if (isOfflineFileMode()) return false;
+            return !getFromStorage('motel_force_offline_mode', false);
         }
 
         async function pushStateToServer(key) {
@@ -1507,19 +1511,36 @@
             }
         }
 
-        // Authentication (online backend)
+        // Authentication (online backend with offline fallback)
         async function login(username, password) {
-            const res = await apiRequest('/api/login', { method: 'POST', body: JSON.stringify({ username, password }) });
-            saveToStorage('motel_api_token', res.token);
-            const userData = {
-                username: res.user.username,
-                role: res.user.role,
-                permissions: res.user.permissions || [],
-                loginTime: new Date().toISOString()
-            };
-            saveToStorage(CONFIG.STORAGE_KEYS.USER_DATA, userData);
-            await bootstrapFromServer();
-            return userData;
+            try {
+                const res = await apiRequest('/api/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+                saveToStorage('motel_force_offline_mode', false);
+                saveToStorage('motel_api_token', res.token);
+                const userData = {
+                    username: res.user.username,
+                    role: res.user.role,
+                    permissions: res.user.permissions || [],
+                    loginTime: new Date().toISOString()
+                };
+                saveToStorage(CONFIG.STORAGE_KEYS.USER_DATA, userData);
+                await bootstrapFromServer();
+                return userData;
+            } catch (err) {
+                // Fallback for direct-file/offline usage.
+                const users = getFromStorage(CONFIG.STORAGE_KEYS.USERS, []);
+                const user = users.find(u => u.username === username && u.password === password);
+                if (!user) throw err;
+                saveToStorage('motel_force_offline_mode', true);
+                localStorage.removeItem('motel_api_token');
+                const userData = {
+                    ...user,
+                    loginTime: new Date().toISOString()
+                };
+                saveToStorage(CONFIG.STORAGE_KEYS.USER_DATA, userData);
+                showToast('Offline mode', 'success');
+                return userData;
+            }
         }
 
         // Permission checking
@@ -1549,6 +1570,7 @@
         function logout() {
             stopCheckoutNotifications();
             localStorage.removeItem('motel_api_token');
+            localStorage.removeItem('motel_force_offline_mode');
             localStorage.removeItem(CONFIG.STORAGE_KEYS.USER_DATA);
             showLogin();
         }
@@ -1586,7 +1608,7 @@
 
         async function showApp() {
             const token = getAuthToken();
-            if (!token) {
+            if (!token && isOnlineBackendMode()) {
                 showToast('Session expired. Please sign in again.', 'error');
                 showLogin();
                 return;
@@ -1594,7 +1616,7 @@
 
             try {
                 // Always refresh from server so all devices stay in sync.
-                await bootstrapFromServer();
+                if (isOnlineBackendMode()) await bootstrapFromServer();
             } catch (err) {
                 console.error('bootstrapFromServer failed:', err);
                 showToast('Could not refresh latest online data', 'error');
