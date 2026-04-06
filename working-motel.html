@@ -1261,12 +1261,25 @@
 
         // Storage functions
         function saveToStorage(key, data) {
-            localStorage.setItem(key, JSON.stringify(data));
+            try {
+                localStorage.setItem(key, JSON.stringify(data));
+            } catch (err) {
+                console.error('saveToStorage failed:', key, err);
+                showToast('Storage error: failed to save data', 'error');
+            }
         }
 
         function getFromStorage(key, defaultValue = null) {
-            const data = localStorage.getItem(key);
-            return data ? JSON.parse(data) : defaultValue;
+            try {
+                const data = localStorage.getItem(key);
+                if (!data) return defaultValue;
+                return JSON.parse(data);
+            } catch (err) {
+                console.error('getFromStorage parse failed:', key, err);
+                // Reset broken value so app keeps working
+                try { localStorage.removeItem(key); } catch (_) { /* ignore */ }
+                return defaultValue;
+            }
         }
 
         function getAuthToken() {
@@ -1351,9 +1364,19 @@
         }
 
         // Permission checking
+        function normalizeUserPermissions(user) {
+            const perms = user?.permissions;
+            if (Array.isArray(perms)) return perms;
+            if (perms && typeof perms === 'object') {
+                return Object.keys(perms).filter(k => !!perms[k]);
+            }
+            return [];
+        }
+
         function hasPermission(permission) {
             const currentUser = getCurrentUser();
-            return currentUser && currentUser.permissions && currentUser.permissions.includes(permission);
+            const permissions = normalizeUserPermissions(currentUser);
+            return permissions.includes(permission);
         }
 
         function checkPermission(permission) {
@@ -1430,6 +1453,7 @@
 
         // Page loading
         function loadPage(pageName) {
+            try {
             document.querySelectorAll('.nav-btn').forEach(btn => {
                 btn.classList.remove('active');
             });
@@ -1464,6 +1488,10 @@
                         loadPage('dashboard');
                     }
                     break;
+            }
+            } catch (err) {
+                console.error('loadPage failed:', err);
+                showToast(err?.message || 'Page load error', 'error');
             }
         }
 
@@ -3490,54 +3518,79 @@
 
         async function saveGuest(event) {
             event.preventDefault();
-            
-            const formData = new FormData(event.target);
-            const editGuestIdVal = (formData.get('guestId') || '').toString().trim();
-            const isEdit = editGuestIdVal !== '';
+            try {
+                const formData = new FormData(event.target);
+                const editGuestIdVal = (formData.get('guestId') || '').toString().trim();
+                const isEdit = editGuestIdVal !== '';
 
-            if (isEdit) {
-                if (!checkPermission('edit')) return;
-            } else {
-                if (!checkPermission('add')) return;
-            }
+                if (isEdit) {
+                    if (!checkPermission('edit')) return;
+                } else {
+                    if (!checkPermission('add')) return;
+                }
 
-            const guests = getFromStorage(CONFIG.STORAGE_KEYS.GUESTS, []);
-            const roomNumber = formData.get('room');
-            const checkOutDate = formData.get('checkOut');
-            const now = new Date();
-            const editId = isEdit ? parseInt(editGuestIdVal, 10) : NaN;
+                const guests = getFromStorage(CONFIG.STORAGE_KEYS.GUESTS, []);
+                const roomNumber = formData.get('room');
+                const checkOutDate = formData.get('checkOut');
+                const now = new Date();
+                const editId = isEdit ? parseInt(editGuestIdVal, 10) : NaN;
 
-            const activeGuest = guests.find(g => {
-                if (g.room !== roomNumber || new Date(g.checkOut) <= now) return false;
-                if (isEdit && (g.id === editId || String(g.id) === String(editId))) return false;
-                return true;
-            });
-            if (activeGuest) {
-                showToast(`Room ${roomNumber} is already occupied until ${activeGuest.checkOut}`, 'error');
-                return;
-            }
-
-            const familyNames = Array.from(document.querySelectorAll('#guestForm input[name="familyMemberName"]'));
-            const familyPassports = Array.from(document.querySelectorAll('#guestForm input[name="familyMemberPassport"]'));
-            const familyPhones = Array.from(document.querySelectorAll('#guestForm input[name="familyMemberPhone"]'));
-            const familyMembers = familyNames.map((nameInput, i) => ({
-                name: (nameInput.value || '').trim(),
-                idPassport: (familyPassports[i]?.value || '').trim(),
-                phone: (familyPhones[i]?.value || '').trim()
-            })).filter(m => m.name || m.idPassport || m.phone);
-
-            const extras = collectGuestExtrasFromForm();
-            const extrasTotal = extras.reduce((sum, x) => sum + (parseFloat(x.total) || 0), 0);
-            const roomAmount = parseFloat(formData.get('amount')) || 0;
-
-            if (isEdit) {
-                const idx = guests.findIndex(g => g.id === editId || String(g.id) === String(editId));
-                if (idx === -1) {
-                    showToast('Guest not found', 'error');
+                const activeGuest = guests.find(g => {
+                    if (g.room !== roomNumber || new Date(g.checkOut) <= now) return false;
+                    if (isEdit && (g.id === editId || String(g.id) === String(editId))) return false;
+                    return true;
+                });
+                if (activeGuest) {
+                    showToast(`Room ${roomNumber} is already occupied until ${activeGuest.checkOut}`, 'error');
                     return;
                 }
-                guests[idx] = {
-                    ...guests[idx],
+
+                const familyNames = Array.from(document.querySelectorAll('#guestForm input[name="familyMemberName"]'));
+                const familyPassports = Array.from(document.querySelectorAll('#guestForm input[name="familyMemberPassport"]'));
+                const familyPhones = Array.from(document.querySelectorAll('#guestForm input[name="familyMemberPhone"]'));
+                const familyMembers = familyNames.map((nameInput, i) => ({
+                    name: (nameInput.value || '').trim(),
+                    idPassport: (familyPassports[i]?.value || '').trim(),
+                    phone: (familyPhones[i]?.value || '').trim()
+                })).filter(m => m.name || m.idPassport || m.phone);
+
+                const extras = collectGuestExtrasFromForm();
+                const extrasTotal = extras.reduce((sum, x) => sum + (parseFloat(x.total) || 0), 0);
+                const roomAmount = parseFloat(formData.get('amount')) || 0;
+
+                if (isEdit) {
+                    const idx = guests.findIndex(g => g.id === editId || String(g.id) === String(editId));
+                    if (idx === -1) {
+                        showToast('Guest not found', 'error');
+                        return;
+                    }
+                    guests[idx] = {
+                        ...guests[idx],
+                        name: formData.get('name'),
+                        idPassport: formData.get('idPassport'),
+                        room: roomNumber,
+                        phone: formData.get('phone'),
+                        checkIn: formData.get('checkIn'),
+                        checkOut: checkOutDate,
+                        days: parseInt(formData.get('days'), 10),
+                        pricePerDay: parseFloat(formData.get('pricePerDay')),
+                        amount: roomAmount,
+                        paymentStatus: formData.get('paymentStatus'),
+                        familyMembers: familyMembers,
+                        extras: extras,
+                        extrasTotal: extrasTotal
+                    };
+                    saveToStorage(CONFIG.STORAGE_KEYS.GUESTS, guests);
+                    try { await pushStateToServer(CONFIG.STORAGE_KEYS.GUESTS); } catch (e) { /* ignore */ }
+                    refreshCheckoutNotificationBadge();
+                    hideGuestForm();
+                    showToast(T('saved'), 'success');
+                    loadPage('guests');
+                    return;
+                }
+
+                const newGuest = {
+                    id: Date.now(),
                     name: formData.get('name'),
                     idPassport: formData.get('idPassport'),
                     room: roomNumber,
@@ -3552,40 +3605,19 @@
                     extras: extras,
                     extrasTotal: extrasTotal
                 };
+
+                guests.push(newGuest);
                 saveToStorage(CONFIG.STORAGE_KEYS.GUESTS, guests);
                 try { await pushStateToServer(CONFIG.STORAGE_KEYS.GUESTS); } catch (e) { /* ignore */ }
                 refreshCheckoutNotificationBadge();
+
                 hideGuestForm();
                 showToast(T('saved'), 'success');
                 loadPage('guests');
-                return;
+            } catch (err) {
+                console.error('saveGuest failed:', err);
+                showToast(err?.message || 'Error saving guest', 'error');
             }
-
-            const newGuest = {
-                id: Date.now(),
-                name: formData.get('name'),
-                idPassport: formData.get('idPassport'),
-                room: roomNumber,
-                phone: formData.get('phone'),
-                checkIn: formData.get('checkIn'),
-                checkOut: checkOutDate,
-                days: parseInt(formData.get('days'), 10),
-                pricePerDay: parseFloat(formData.get('pricePerDay')),
-                amount: roomAmount,
-                paymentStatus: formData.get('paymentStatus'),
-                familyMembers: familyMembers,
-                extras: extras,
-                extrasTotal: extrasTotal
-            };
-
-            guests.push(newGuest);
-            saveToStorage(CONFIG.STORAGE_KEYS.GUESTS, guests);
-            try { await pushStateToServer(CONFIG.STORAGE_KEYS.GUESTS); } catch (e) { /* ignore */ }
-            refreshCheckoutNotificationBadge();
-
-            hideGuestForm();
-            showToast(T('saved'), 'success');
-            loadPage('guests');
         }
 
         function saveExpense(event) {
@@ -3701,6 +3733,12 @@
         // Event listeners
         document.addEventListener('DOMContentLoaded', function() {
             console.log("DOM loaded, initializing app...");
+            window.addEventListener('error', function(e) {
+                console.error('Unhandled runtime error:', e.error || e.message);
+            });
+            window.addEventListener('unhandledrejection', function(e) {
+                console.error('Unhandled promise rejection:', e.reason);
+            });
             
             // Initialize data
             initializeData();
